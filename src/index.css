@@ -331,26 +331,33 @@ body {
 
 /* Status indicators */
 .status-indicator {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: var(--radius-full);
+  box-shadow: 0 0 8px currentColor;
 }
 
 .status-idle {
   background: var(--color-text-muted);
+  color: var(--color-text-muted);
 }
 
 .status-connecting {
   background: var(--color-warning);
+  color: var(--color-warning);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-connected {
   background: var(--color-success);
+  color: var(--color-success);
+  box-shadow: 0 0 12px var(--color-success);
 }
 
 .status-error {
   background: var(--color-error);
+  color: var(--color-error);
+  box-shadow: 0 0 12px var(--color-error);
 }
 
 /* QR Code container */

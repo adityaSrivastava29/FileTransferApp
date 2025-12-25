@@ -13,12 +13,12 @@ interface ConnectionStatusProps {
 }
 
 const stateConfig: Record<ConnectionState, { label: string; colorClass: string; animate: boolean }> = {
-  idle: { label: 'Ready', colorClass: 'status-idle', animate: false },
+  idle: { label: 'Ready to connect', colorClass: 'status-connected', animate: false }, // Green to show it's ready
   connecting: { label: 'Connecting...', colorClass: 'status-connecting', animate: true },
-  connected: { label: 'Connected', colorClass: 'status-connected', animate: false },
-  transferring: { label: 'Transferring', colorClass: 'status-connected', animate: true },
-  completed: { label: 'Completed', colorClass: 'status-connected', animate: false },
-  error: { label: 'Error', colorClass: 'status-error', animate: false },
+  connected: { label: 'Connected!', colorClass: 'status-connected', animate: false },
+  transferring: { label: 'Transferring...', colorClass: 'status-connected', animate: true },
+  completed: { label: 'Completed!', colorClass: 'status-connected', animate: false },
+  error: { label: 'Connection Error', colorClass: 'status-error', animate: false },
 };
 
 export function ConnectionStatus({

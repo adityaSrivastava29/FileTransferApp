@@ -6,6 +6,7 @@
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import type { ConnectionState, TransferMessage } from '../types';
+import { getPlatformInfo } from '../utils/platform';
 
 export type ConnectionCallback = (remotePeerId: string) => void;
 export type MessageCallback = (message: TransferMessage) => void;
@@ -17,6 +18,9 @@ interface PeerManagerConfig {
   retryDelay?: number;
   debug?: boolean;
 }
+
+// Unique prefix to avoid peer ID collisions (inspired by reference project)
+const PEER_ID_PREFIX = 'sharedrop-ft-';
 
 const DEFAULT_CONFIG: Required<PeerManagerConfig> = {
   maxRetries: 3,
@@ -175,7 +179,7 @@ export class PeerManager {
   }
 
   /**
-   * Generate a short, readable peer ID
+   * Generate a short, readable peer ID with namespace prefix
    */
   private generatePeerId(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid confusing chars like O/0, I/1
@@ -183,7 +187,7 @@ export class PeerManager {
     for (let i = 0; i < 6; i++) {
       id += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    return id;
+    return PEER_ID_PREFIX + id;
   }
 
   // ============================================
@@ -334,15 +338,18 @@ export class PeerManager {
   /**
    * Send binary data (ArrayBuffer) to the connected peer
    * Waits for buffer to drain if necessary (backpressure handling)
+   * Uses OS-specific buffer sizes (4MB iOS, 8MB others) for stability
    */
   async sendBinary(data: ArrayBuffer): Promise<boolean> {
     if (!this.connection || !this.connection.open) {
       return false;
     }
 
-    const HIGH_WATER_MARK = 1024 * 1024; // 1MB buffer limit
+    // OS-specific buffer size for stability (from reference project)
+    const { isIOS } = getPlatformInfo();
+    const HIGH_WATER_MARK = isIOS ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
 
-    // Wait for buffer to drain if needed
+    // Wait for buffer to drain if needed (flow control)
     // @ts-expect-error - DataConnection has bufferSize but not in types
     while (this.connection.bufferSize > HIGH_WATER_MARK) {
       await new Promise(resolve => setTimeout(resolve, 50));

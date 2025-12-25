@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+import { extractDisplayId } from '../utils/platform';
 
 interface QRCodeDisplayProps {
   value: string;
@@ -14,6 +15,9 @@ interface QRCodeDisplayProps {
 export function QRCodeDisplay({ value, size = 256, className = '' }: QRCodeDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Extract short display ID from full peer ID
+  const displayId = extractDisplayId(value);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -43,8 +47,8 @@ export function QRCodeDisplay({ value, size = 256, className = '' }: QRCodeDispl
   return (
     <div className={`qr-container ${className}`}>
       <canvas ref={canvasRef} className="rounded-lg" />
-      <p className="text-center mt-3 font-mono text-lg font-bold text-gray-800 tracking-wider">
-        {value}
+      <p className="text-center mt-3 font-mono text-xl font-bold text-gray-800 tracking-widest">
+        {displayId}
       </p>
     </div>
   );

@@ -59,8 +59,18 @@ export function isWebRTCSupported(): boolean {
  */
 export function getMaxChunkSize(): number {
   const { isIOS } = getPlatformInfo();
-  // iOS: 64KB max, Others: 256KB max
+  // iOS: 64KB max, Others: 256KB max (same as reference project)
   return isIOS ? 65536 : 262144;
+}
+
+/**
+ * Get buffer size for WebRTC data channel based on platform
+ * Critical for iOS Safari stability - reference project uses 4MB for Apple, 8MB for others
+ */
+export function getBufferSize(): number {
+  const { isIOS } = getPlatformInfo();
+  // iOS/Safari: 4MB buffer, Others: 8MB buffer
+  return isIOS ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
 }
 
 /**
@@ -70,4 +80,15 @@ export function getMaxZipSize(): number {
   const { isIOS } = getPlatformInfo();
   // iOS: 4GB, Others: 8GB
   return isIOS ? 4 * 1024 * 1024 * 1024 : 8 * 1024 * 1024 * 1024;
+}
+
+/**
+ * Extract display ID from full peer ID (removes prefix)
+ */
+export function extractDisplayId(fullPeerId: string): string {
+  const prefix = 'sharedrop-ft-';
+  if (fullPeerId.startsWith(prefix)) {
+    return fullPeerId.substring(prefix.length);
+  }
+  return fullPeerId;
 }
