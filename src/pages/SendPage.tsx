@@ -1,127 +1,291 @@
-/**
- * SendPage - QR Scanner and file picker for sender
- */
-
-import { useState, useCallback, useEffect } from 'react';
-import { QRScanner } from '../components/QRScanner';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Send, Loader2, CheckCircle } from 'lucide-react';
+import { Layout } from '../components/layout/Layout';
+import { PeerIdDisplay } from '../components/PeerIdDisplay';
 import { FilePicker } from '../components/FilePicker';
-import { ConnectionStatus } from '../components/ConnectionStatus';
-import { usePeer } from '../hooks/usePeer';
-import type { ConnectionState } from '../types';
+import { FileList } from '../components/FileList';
+import { TransferProgress } from '../components/TransferProgress';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { usePeer } from '../contexts/PeerContext';
+import { useTransferStore } from '../store/transferStore';
+import { CHUNK_SIZE } from '../types';
+import type { 
+  FileWithMetadata, 
+  FileOfferPayload, 
+  FileChunkPayload, 
+  PeerMessage,
+  TransferSession,
+} from '../types';
+import { createFileMetadata, chunkFile } from '../utils/fileUtils';
+import { v4 as uuidv4 } from 'uuid';
 
-interface SendPageProps {
-  onStartTransfer: (files: File[]) => void;
-  onBack: () => void;
-}
+type SendStep = 'waiting' | 'selecting' | 'transferring' | 'complete';
 
-export function SendPage({ onStartTransfer, onBack }: SendPageProps) {
-  const { connectionState, error, isConnected, initialize, connect, reset } = usePeer();
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [scanComplete, setScanComplete] = useState(false);
-
+export function SendPage() {
+  const [step, setStep] = useState<SendStep>('waiting');
+  const [files, setFiles] = useState<FileWithMetadata[]>([]);
+  const [isTransferring, setIsTransferring] = useState(false);
+  
+  const { 
+    peerId, 
+    status, 
+    remotePeerId,
+    initializePeer, 
+    sendMessage, 
+    onMessage,
+  } = usePeer();
+  
+  const { addSession, updateProgress, updateSessionStatus, sessions, addToast } = useTransferStore();
+  const sessionRef = useRef<string | null>(null);
+  
   // Initialize peer on mount
   useEffect(() => {
-    initialize();
-  }, [initialize]);
-
-  const handleScan = useCallback(async (scannedPeerId: string) => {
-    setScanComplete(true);
-    try {
-      await connect(scannedPeerId);
-    } catch {
-      // Error handled by usePeer
+    initializePeer();
+  }, [initializePeer]);
+  
+  // Transition to file selection when connected
+  useEffect(() => {
+    if (status === 'connected' && step === 'waiting') {
+      setStep('selecting');
+      addToast({ type: 'success', message: 'Receiver connected! Select files to send.' });
     }
-  }, [connect]);
-
-  const handleScanError = useCallback((err: string) => {
-    console.error('Scan error:', err);
+  }, [status, step, addToast]);
+  
+  // Handle incoming messages
+  useEffect(() => {
+    onMessage.current = (message: PeerMessage) => {
+      console.log('SendPage received message:', message);
+      
+      if (message.type === 'file-accept') {
+        // Start the transfer
+        startTransfer();
+      } else if (message.type === 'file-reject') {
+        addToast({ type: 'error', message: 'Receiver declined the files' });
+        setIsTransferring(false);
+      }
+    };
+    
+    return () => {
+      onMessage.current = null;
+    };
+  }, [files, addToast]);
+  
+  // Handle file selection
+  const handleFilesSelected = useCallback((selectedFiles: File[]) => {
+    const filesWithMetadata: FileWithMetadata[] = selectedFiles.map(file => ({
+      file,
+      metadata: createFileMetadata(file),
+    }));
+    
+    setFiles(prev => [...prev, ...filesWithMetadata]);
   }, []);
-
-  const handleFilesSelected = useCallback((files: File[]) => {
-    setSelectedFiles(files);
+  
+  // Remove file
+  const handleRemoveFile = useCallback((fileId: string) => {
+    setFiles(prev => prev.filter(f => f.metadata.id !== fileId));
   }, []);
-
-  const handleRemoveFile = useCallback((index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const handleStartTransfer = () => {
-    if (selectedFiles.length > 0 && isConnected) {
-      onStartTransfer(selectedFiles);
+  
+  // Send file offer
+  const handleSendOffer = useCallback(() => {
+    if (files.length === 0) return;
+    
+    const fileMetadataList = files.map(f => f.metadata);
+    const totalSize = files.reduce((sum, f) => sum + f.metadata.size, 0);
+    
+    const payload: FileOfferPayload = {
+      files: fileMetadataList,
+      totalSize,
+    };
+    
+    sendMessage('file-offer', payload);
+    setIsTransferring(true);
+    addToast({ type: 'info', message: 'Waiting for receiver to accept...' });
+  }, [files, sendMessage, addToast]);
+  
+  // Start the actual transfer
+  const startTransfer = useCallback(async () => {
+    setStep('transferring');
+    
+    // Create transfer session
+    const sessionId = uuidv4();
+    sessionRef.current = sessionId;
+    
+    const session: TransferSession = {
+      id: sessionId,
+      direction: 'send',
+      files: files.map(f => f.metadata),
+      progress: new Map(),
+      overallProgress: 0,
+      startTime: Date.now(),
+      status: 'in-progress',
+    };
+    
+    addSession(session);
+    
+    // Transfer each file
+    for (const fileWithMeta of files) {
+      const { file, metadata } = fileWithMeta;
+      
+      // Initialize progress for this file
+      updateProgress(sessionId, metadata.id, {
+        fileId: metadata.id,
+        fileName: metadata.name,
+        bytesTransferred: 0,
+        totalBytes: metadata.size,
+        percentage: 0,
+        speed: 0,
+        status: 'transferring',
+      });
+      
+      // Chunk and send
+      const chunked = await chunkFile(file);
+      let startTime = Date.now();
+      let bytesInWindow = 0;
+      
+      for (let i = 0; i < chunked.chunks.length; i++) {
+        const chunkPayload: FileChunkPayload = {
+          fileId: metadata.id,
+          chunkIndex: i,
+          totalChunks: chunked.chunks.length,
+          data: chunked.chunks[i],
+        };
+        
+        sendMessage('file-chunk', chunkPayload);
+        
+        // Update progress
+        const bytesTransferred = (i + 1) * CHUNK_SIZE;
+        const actualBytes = Math.min(bytesTransferred, metadata.size);
+        bytesInWindow += chunked.chunks[i].byteLength;
+        
+        const elapsed = Date.now() - startTime;
+        const speed = elapsed > 0 ? (bytesInWindow / elapsed) * 1000 : 0;
+        
+        updateProgress(sessionId, metadata.id, {
+          bytesTransferred: actualBytes,
+          percentage: (actualBytes / metadata.size) * 100,
+          speed,
+        });
+        
+        // Reset speed calculation window periodically
+        if (elapsed > 1000) {
+          startTime = Date.now();
+          bytesInWindow = 0;
+        }
+        
+        // Small delay to prevent overwhelming the connection
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      
+      // Mark file as complete
+      updateProgress(sessionId, metadata.id, {
+        bytesTransferred: metadata.size,
+        percentage: 100,
+        status: 'complete',
+      });
+      
+      sendMessage('file-complete', { fileId: metadata.id });
     }
-  };
-
-  const handleRetry = async () => {
-    setScanComplete(false);
-    await reset();
-  };
-
+    
+    // All files transferred
+    sendMessage('transfer-complete', {});
+    updateSessionStatus(sessionId, 'complete');
+    setStep('complete');
+    addToast({ type: 'success', message: 'All files sent successfully!' });
+  }, [files, addSession, updateProgress, updateSessionStatus, sendMessage, addToast]);
+  
+  // Get current session
+  const currentSession = sessionRef.current ? sessions.get(sessionRef.current) : null;
+  
   return (
-    <div className="page animate-fadeIn">
-      {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={onBack}
-          className="btn btn-ghost p-2"
-          aria-label="Go back"
-        >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <h1 className="text-xl font-semibold">Send Files</h1>
-      </div>
-
-      <div className="flex-1 flex flex-col">
-        {/* Scanner or Connection Status */}
-        {!isConnected && !scanComplete && (
-          <div className="mb-6">
-            <QRScanner
-              onScan={handleScan}
-              onError={handleScanError}
-              className="max-w-md mx-auto"
+    <Layout showBack title="Send Files">
+      <div className="max-w-xl mx-auto animate-fade-in">
+        {/* Step 1: Waiting for connection */}
+        {step === 'waiting' && (
+          <Card className="text-center py-8">
+            <h2 className="text-2xl font-bold text-surface-100 mb-6">
+              Share Your Connection Code
+            </h2>
+            
+            <PeerIdDisplay 
+              peerId={peerId} 
+              loading={status === 'connecting'} 
             />
-          </div>
-        )}
-
-        {scanComplete && !isConnected && (
-          <div className="flex flex-col items-center justify-center py-8">
-            <ConnectionStatus
-              state={connectionState as ConnectionState}
-              error={error}
-              onRetry={handleRetry}
-            />
-          </div>
-        )}
-
-        {/* File picker (shown when connected) */}
-        {isConnected && (
-          <div className="animate-slideUp">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="status-indicator status-connected" />
-              <span className="text-sm text-green-400">Connected</span>
+            
+            <div className="mt-8 flex items-center justify-center gap-2 text-surface-400">
+              <Loader2 className="w-5 h-5 spinner" />
+              <span>Waiting for receiver to connect...</span>
             </div>
-
-            <FilePicker
-              onFilesSelected={handleFilesSelected}
-              selectedFiles={selectedFiles}
-              onRemoveFile={handleRemoveFile}
-              className="mb-6"
-            />
-
-            <button
-              onClick={handleStartTransfer}
-              disabled={selectedFiles.length === 0}
-              className="btn btn-primary w-full text-lg py-4"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-              </svg>
-              Send {selectedFiles.length > 0 ? `${selectedFiles.length} File${selectedFiles.length !== 1 ? 's' : ''}` : 'Files'}
-            </button>
+          </Card>
+        )}
+        
+        {/* Step 2: File Selection */}
+        {step === 'selecting' && (
+          <div className="space-y-6">
+            <Card>
+              <div className="flex items-center gap-3 mb-6">
+                <CheckCircle className="w-6 h-6 text-success-400" />
+                <div>
+                  <h2 className="text-lg font-semibold text-surface-100">
+                    Connected to Receiver
+                  </h2>
+                  <p className="text-sm text-surface-400">
+                    Peer: {remotePeerId}
+                  </p>
+                </div>
+              </div>
+              
+              <FilePicker onFilesSelected={handleFilesSelected} />
+            </Card>
+            
+            {files.length > 0 && (
+              <Card>
+                <h3 className="text-lg font-semibold text-surface-100 mb-4">
+                  Selected Files
+                </h3>
+                <FileList 
+                  files={files} 
+                  onRemove={handleRemoveFile}
+                />
+                
+                <div className="mt-6">
+                  <Button
+                    size="lg"
+                    className="w-full"
+                    onClick={handleSendOffer}
+                    loading={isTransferring}
+                    icon={<Send className="w-5 h-5" />}
+                  >
+                    {isTransferring ? 'Waiting for acceptance...' : 'Send Files'}
+                  </Button>
+                </div>
+              </Card>
+            )}
           </div>
         )}
+        
+        {/* Step 3: Transferring */}
+        {step === 'transferring' && currentSession && (
+          <Card>
+            <TransferProgress session={currentSession} />
+          </Card>
+        )}
+        
+        {/* Step 4: Complete */}
+        {step === 'complete' && currentSession && (
+          <Card className="text-center py-8">
+            <CheckCircle className="w-16 h-16 text-success-400 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-surface-100 mb-2">
+              Transfer Complete!
+            </h2>
+            <p className="text-surface-400 mb-6">
+              All files have been sent successfully.
+            </p>
+            
+            <TransferProgress session={currentSession} />
+          </Card>
+        )}
       </div>
-    </div>
+    </Layout>
   );
 }

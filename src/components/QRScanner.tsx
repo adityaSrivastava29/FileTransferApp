@@ -1,161 +1,159 @@
-/**
- * QRScanner - Camera-based QR code scanner
- * Uses html5-qrcode library for scanning
- */
-
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
+import { useEffect, useRef, useState } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
+import { Camera, CameraOff, AlertCircle } from 'lucide-react';
+import { Button } from './ui/Button';
+import { parsePeerId, validatePeerId } from '../utils/peerUtils';
 
 interface QRScannerProps {
-  onScan: (value: string) => void;
+  onScan: (peerId: string) => void;
   onError?: (error: string) => void;
   className?: string;
 }
 
 export function QRScanner({ onScan, onError, className = '' }: QRScannerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [permissionDenied, setPermissionDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasScannedRef = useRef(false);
-
-  const initScanner = useCallback(async () => {
-    if (!containerRef.current || scannerRef.current) return;
-
-    const scannerId = `qr-scanner-${Date.now()}`;
-    containerRef.current.id = scannerId;
-
+  const [hasCamera, setHasCamera] = useState(true);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  const startScanner = async () => {
+    if (!containerRef.current) return;
+    
     try {
-      const scanner = new Html5Qrcode(scannerId);
-      scannerRef.current = scanner;
-
-      await scanner.start(
+      setError(null);
+      
+      // Create scanner instance
+      scannerRef.current = new Html5Qrcode('qr-scanner-container');
+      
+      await scannerRef.current.start(
         { facingMode: 'environment' },
         {
           fps: 10,
           qrbox: { width: 250, height: 250 },
-          aspectRatio: 1,
         },
         (decodedText) => {
-          // Prevent multiple scans
-          if (hasScannedRef.current) return;
-          hasScannedRef.current = true;
+          // Parse and validate the peer ID
+          const peerId = parsePeerId(decodedText);
+          const validation = validatePeerId(peerId);
           
-          // Vibrate on successful scan (if supported)
-          if ('vibrate' in navigator) {
-            navigator.vibrate(100);
+          if (validation.valid) {
+            stopScanner();
+            onScan(peerId);
+          } else {
+            setError('Invalid QR code');
           }
-          
-          onScan(decodedText);
         },
         () => {
-          // Ignore QR code not found errors (expected during scanning)
+          // QR code parse error - ignore, keep scanning
         }
       );
-
-      setIsScanning(true);
-      setError(null);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to start camera';
       
-      if (errorMessage.includes('Permission') || errorMessage.includes('NotAllowed')) {
-        setPermissionDenied(true);
+      setIsScanning(true);
+    } catch (err) {
+      console.error('Failed to start scanner:', err);
+      const errorMessage = (err as Error).message;
+      
+      if (errorMessage.includes('Permission')) {
+        setError('Camera permission denied. Please allow camera access.');
+      } else if (errorMessage.includes('NotFoundError')) {
+        setError('No camera found on this device.');
+        setHasCamera(false);
       } else {
-        setError(errorMessage);
+        setError('Failed to start camera. Please try again.');
       }
       
       onError?.(errorMessage);
     }
-  }, [onScan, onError]);
-
-  const stopScanner = useCallback(async () => {
-    if (scannerRef.current) {
+  };
+  
+  const stopScanner = async () => {
+    if (scannerRef.current && isScanning) {
       try {
-        // Check if scanner is actually running before stopping
-        const state = scannerRef.current.getState();
-        if (state === Html5QrcodeScannerState.SCANNING) {
-          await scannerRef.current.stop();
-        }
-      } catch {
-        // Ignore errors when stopping
+        await scannerRef.current.stop();
+        scannerRef.current = null;
+        setIsScanning(false);
+      } catch (err) {
+        console.error('Error stopping scanner:', err);
       }
-      scannerRef.current = null;
-      setIsScanning(false);
     }
-  }, []);
-
+  };
+  
+  // Cleanup on unmount
   useEffect(() => {
-    initScanner();
-
     return () => {
       stopScanner();
     };
-  }, [initScanner, stopScanner]);
-
-  const handleRetry = () => {
-    hasScannedRef.current = false;
-    setPermissionDenied(false);
-    setError(null);
-    stopScanner().then(initScanner);
-  };
-
-  if (permissionDenied) {
+  }, []);
+  
+  if (!hasCamera) {
     return (
-      <div className={`flex flex-col items-center justify-center p-8 ${className}`}>
-        <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-yellow-500/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">Camera Permission Required</h3>
-          <p className="text-[var(--color-text-secondary)] mb-4">
-            Please allow camera access to scan QR codes
-          </p>
-          <button onClick={handleRetry} className="btn btn-primary">
-            Try Again
-          </button>
-        </div>
+      <div className={`text-center py-8 ${className}`}>
+        <CameraOff className="w-12 h-12 text-surface-500 mx-auto mb-4" />
+        <p className="text-surface-400">No camera available</p>
+        <p className="text-surface-500 text-sm mt-2">
+          Please enter the connection code manually
+        </p>
       </div>
     );
   }
-
-  if (error) {
-    return (
-      <div className={`flex flex-col items-center justify-center p-8 ${className}`}>
-        <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-2">Scanner Error</h3>
-          <p className="text-[var(--color-text-secondary)] mb-4">{error}</p>
-          <button onClick={handleRetry} className="btn btn-primary">
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+  
   return (
-    <div className={`relative ${className}`}>
-      <div 
-        ref={containerRef} 
-        className="qr-scanner-container rounded-xl overflow-hidden"
-        style={{ minHeight: 300 }}
-      />
+    <div className={`flex flex-col items-center gap-4 ${className}`}>
+      {/* Scanner container */}
+      <div
+        ref={containerRef}
+        className="relative w-full max-w-sm aspect-square rounded-2xl overflow-hidden bg-surface-800"
+      >
+        <div
+          id="qr-scanner-container"
+          className="w-full h-full"
+          style={{ display: isScanning ? 'block' : 'none' }}
+        />
+        
+        {!isScanning && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+            <Camera className="w-16 h-16 text-surface-500" />
+            <p className="text-surface-400">Camera not active</p>
+          </div>
+        )}
+        
+        {/* Scanning overlay */}
+        {isScanning && (
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Corners */}
+            <div className="absolute top-1/4 left-1/4 w-8 h-8 border-t-4 border-l-4 border-primary-400 rounded-tl-lg" />
+            <div className="absolute top-1/4 right-1/4 w-8 h-8 border-t-4 border-r-4 border-primary-400 rounded-tr-lg" />
+            <div className="absolute bottom-1/4 left-1/4 w-8 h-8 border-b-4 border-l-4 border-primary-400 rounded-bl-lg" />
+            <div className="absolute bottom-1/4 right-1/4 w-8 h-8 border-b-4 border-r-4 border-primary-400 rounded-br-lg" />
+            
+            {/* Scanning line animation */}
+            <div className="absolute left-1/4 right-1/4 h-0.5 bg-primary-400 animate-pulse-soft"
+              style={{ top: '50%' }}
+            />
+          </div>
+        )}
+      </div>
       
-      {!isScanning && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-xl">
-          <div className="animate-spin w-8 h-8 border-4 border-white border-t-transparent rounded-full" />
+      {/* Error message */}
+      {error && (
+        <div className="flex items-center gap-2 text-error-400 text-sm">
+          <AlertCircle className="w-4 h-4" />
+          <span>{error}</span>
         </div>
       )}
       
-      <p className="text-center mt-4 text-[var(--color-text-secondary)]">
-        Point your camera at the QR code
+      {/* Control buttons */}
+      <Button
+        variant={isScanning ? 'secondary' : 'primary'}
+        onClick={isScanning ? stopScanner : startScanner}
+        icon={isScanning ? <CameraOff className="w-5 h-5" /> : <Camera className="w-5 h-5" />}
+      >
+        {isScanning ? 'Stop Camera' : 'Start Camera'}
+      </Button>
+      
+      <p className="text-surface-500 text-sm text-center">
+        Point your camera at a ShareDrop QR code
       </p>
     </div>
   );

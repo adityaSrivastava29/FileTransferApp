@@ -1,146 +1,126 @@
-/**
- * FilePicker - File selection with drag and drop support
- */
-
-import { useState, useRef, useCallback, type DragEvent, type ChangeEvent } from 'react';
-import { formatBytes } from '../utils/format';
+import React, { useRef, useCallback } from 'react';
+import { Upload, FolderOpen } from 'lucide-react';
+import { Button } from './ui/Button';
 
 interface FilePickerProps {
   onFilesSelected: (files: File[]) => void;
-  selectedFiles: File[];
-  onRemoveFile: (index: number) => void;
-  maxFiles?: number;
+  accept?: string;
+  multiple?: boolean;
   className?: string;
 }
 
 export function FilePicker({
   onFilesSelected,
-  selectedFiles,
-  onRemoveFile,
-  maxFiles = 50,
+  accept,
+  multiple = true,
   className = '',
 }: FilePickerProps) {
-  const [isDragging, setIsDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    
-    const fileArray = Array.from(files);
-    const remainingSlots = maxFiles - selectedFiles.length;
-    const filesToAdd = fileArray.slice(0, remainingSlots);
-    
-    if (filesToAdd.length > 0) {
-      onFilesSelected([...selectedFiles, ...filesToAdd]);
-    }
-  }, [selectedFiles, maxFiles, onFilesSelected]);
-
-  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = React.useState(false);
+  
+  const handleFiles = useCallback((fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    onFilesSelected(files);
+  }, [onFilesSelected]);
+  
+  const handleClick = () => {
+    fileInputRef.current?.click();
+  };
+  
+  const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+  };
+  
+  const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (e.currentTarget === dropZoneRef.current) {
+      setIsDragging(false);
+    }
+  };
+  
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+  };
+  
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
     handleFiles(e.dataTransfer.files);
-  }, [handleFiles]);
-
-  const handleInputChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    handleFiles(e.target.files);
-    // Reset input so same file can be selected again
-    if (inputRef.current) {
-      inputRef.current.value = '';
-    }
-  }, [handleFiles]);
-
-  const openFilePicker = () => {
-    inputRef.current?.click();
   };
-
-  const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
-
+  
   return (
     <div className={className}>
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple={multiple}
+        accept={accept}
+        onChange={(e) => handleFiles(e.target.files)}
+        className="hidden"
+      />
+      
       {/* Drop zone */}
       <div
-        onDragOver={handleDragOver}
+        ref={dropZoneRef}
+        onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
         onDrop={handleDrop}
-        onClick={openFilePicker}
+        onClick={handleClick}
         className={`
-          relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
-          transition-all duration-200
-          ${isDragging 
-            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10' 
-            : 'border-[var(--color-text-muted)] hover:border-[var(--color-primary-light)]'
-          }
+          drop-zone rounded-2xl p-8
+          flex flex-col items-center justify-center gap-4
+          cursor-pointer
+          min-h-[200px]
+          ${isDragging ? 'active' : ''}
         `}
       >
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          onChange={handleInputChange}
-          className="hidden"
-        />
+        <div className={`
+          w-16 h-16 rounded-full
+          bg-primary-500/20
+          flex items-center justify-center
+          transition-transform duration-300
+          ${isDragging ? 'scale-110' : ''}
+        `}>
+          <Upload className={`w-8 h-8 text-primary-400 ${isDragging ? 'animate-bounce' : ''}`} />
+        </div>
         
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/20 flex items-center justify-center">
-            <svg className="w-6 h-6 text-[var(--color-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-          </div>
-          <div>
-            <p className="font-medium">
-              {isDragging ? 'Drop files here' : 'Tap to select files'}
-            </p>
-            <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-              or drag and drop
-            </p>
-          </div>
+        <div className="text-center">
+          <p className="text-surface-200 font-medium mb-1">
+            {isDragging ? 'Drop files here' : 'Drag & drop files here'}
+          </p>
+          <p className="text-surface-500 text-sm">
+            or click to browse
+          </p>
         </div>
       </div>
-
-      {/* Selected files list */}
-      {selectedFiles.length > 0 && (
-        <div className="mt-4 space-y-2">
-          <div className="flex justify-between items-center text-sm">
-            <span className="text-[var(--color-text-secondary)]">
-              {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
-            </span>
-            <span className="font-medium">{formatBytes(totalSize)}</span>
-          </div>
-          
-          <div className="max-h-48 overflow-y-auto space-y-2">
-            {selectedFiles.map((file, index) => (
-              <div key={`${file.name}-${index}`} className="file-item">
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{file.name}</p>
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    {formatBytes(file.size)}
-                  </p>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveFile(index);
-                  }}
-                  className="p-2 rounded-full hover:bg-red-500/20 transition-colors"
-                  aria-label="Remove file"
-                >
-                  <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
+      
+      {/* Alternative: Select Folder button (for browsers that support it) */}
+      {'webkitdirectory' in document.createElement('input') && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FolderOpen className="w-4 h-4" />}
+            onClick={(e) => {
+              e.stopPropagation();
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.webkitdirectory = true;
+              input.onchange = () => handleFiles(input.files);
+              input.click();
+            }}
+          >
+            Select Folder
+          </Button>
         </div>
       )}
     </div>
