@@ -6,8 +6,10 @@ import { ReceivePage } from './pages/ReceivePage';
 import './App.css';
 
 function App() {
+  const basename = process.env.GITHUB_ACTIONS ? '/FileTransferApp' : '/';
+  
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <PeerProvider>
         <Routes>
           <Route path="/" element={<HomePage />} />
